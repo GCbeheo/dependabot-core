@@ -531,14 +531,29 @@ else
   end
 end
 
-hash = {
+version_update_hash = {
   "name" => "version-updates",
+  "rules" => {
+    "patterns" => ["*"],
+    "update-types" => ["minor", "patch"]
+  },
+  "applies-to" => "version-updates"
+}
+
+security_update_hash = {
+  "name" => "security-updates",
   "rules" => {
     "patterns" => ["*"],
     "update-types" => ["patch"]
   },
-  "applies-to" => "version-updates"
+  "applies-to" => "security-updates"
 }
+
+hash = version_update_hash
+
+if $options[:security_updates_only] == true
+  hash = security_update_hash
+end
 
 $group = Dependabot::DependencyGroup.new(name: hash["name"], rules: hash["rules"], applies_to: hash["applies-to"])
 
@@ -630,6 +645,7 @@ puts "=> updating #{dependencies.count} dependencies: #{dependencies.map(&:name)
 
 # rubocop:disable Metrics/BlockLength
 my_array_deps = []
+my_updated_files = nil
 checker_count = 0
 dependencies.each do |dep|
   checker_count += 1
@@ -726,6 +742,7 @@ dependencies.each do |dep|
 
   updater = file_updater_for(my_array_deps)
   updated_files = updater.updated_dependency_files
+  my_updated_files = updated_files
 
   updated_deps = updated_deps.reject do |d|
     next false if d.name == checker.dependency.name
@@ -733,17 +750,6 @@ dependencies.each do |dep|
 
     d.version == d.previous_version
   end
-
-  msg = Dependabot::PullRequestCreator::MessageBuilder.new(
-    dependencies: updated_deps,
-    files: updated_files,
-    credentials: $options[:credentials],
-    source: $source,
-    commit_message_options: $update_config.commit_message_options.to_h,
-    github_redirection_service: Dependabot::PullRequestCreator::DEFAULT_GITHUB_REDIRECTION_SERVICE
-  ).message
-
-  puts " => #{msg.pr_name.downcase}"
 
   if $options[:write]
     updated_files.each do |updated_file|
@@ -784,26 +790,49 @@ rescue StandardError => e
   puts " => handled error whilst updating #{dep.name}: #{error_details.fetch(:"error-type")} " \
        "#{error_details.fetch(:"error-detail")}"
 end
-assignee = (ENV["PULL_REQUESTS_ASSIGNEE"] || ENV["GITLAB_ASSIGNEE_ID"])&.to_i
-assignees = assignee ? [assignee] : assignee
-pr_creator = Dependabot::PullRequestCreator.new(
-  source: $source,
-  base_commit: $commit,
-  dependencies: my_array_deps,
-  files: $files,
-  credentials:  $options[:credentials],
-  assignees: assignees,
-  author_details: { name: "Dependabot", email: "no-reply@github.com" },
-  label_language: true,
-)
 
 if my_array_deps.length > 0
+  msg = Dependabot::PullRequestCreator::MessageBuilder.new(
+    dependencies: my_array_deps,
+    files: my_updated_files,
+    credentials: $options[:credentials],
+    source: $source,
+    commit_message_options: $update_config.commit_message_options.to_h,
+    github_redirection_service: Dependabot::PullRequestCreator::DEFAULT_GITHUB_REDIRECTION_SERVICE
+  ).message
+
+  puts " => #{msg}"
+
+  pr_name = "Dependencies - Version Update"
+  current_time = Time.now
+
+  if $options[:security_updates_only] == true
+    pr_name = "Dependencies - Security Update"
+  end
+
+  custom_message = Dependabot::PullRequestCreator::Message.new(
+    pr_name: "#{pr_name} - #{current_time.strftime('%Y-%m-%d')}",
+    pr_message: msg.pr_message,
+    commit_message: msg.commit_message
+  )
+
+  assignee = (ENV["PULL_REQUESTS_ASSIGNEE"] || ENV["GITLAB_ASSIGNEE_ID"])&.to_i
+  assignees = assignee ? [assignee] : assignee
+  pr_creator = Dependabot::PullRequestCreator.new(
+    source: $source,
+    base_commit: $commit,
+    dependencies: my_array_deps,
+    files: my_updated_files,
+    message: custom_message,
+    credentials:  $options[:credentials],
+    assignees: assignees,
+    author_details: { name: "Dependabot", email: "no-reply@github.com" },
+    label_language: true,
+  )
   pull_request = pr_creator.create
 else
   puts "Nothing need to update."
 end
-
-
 
 puts "submitted"
 
