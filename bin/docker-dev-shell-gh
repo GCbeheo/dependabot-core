@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set +e
+set -e
 cd "$(dirname "$0")/.."
 source script/_common
 
@@ -242,4 +242,4 @@ docker run --rm \
   --env "DEPENDABOT_TEST_ACCESS_TOKEN" \
   "${DOCKER_OPTS[@]}" \
   --cap-add=SYS_PTRACE \
-  "$IMAGE_NAME" "${CONTAINER_ARGS[@]}"
+  "$IMAGE_NAME" "${CONTAINER_ARGS[@]}" || true
